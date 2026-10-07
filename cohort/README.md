@@ -1,27 +1,28 @@
-# 队列文件放置目录
+# Cohort file directory
 
-本目录**不入库**（见根目录 `.gitignore`），用于放置原始队列文件。
+This directory is **not committed** (see the root `.gitignore`); it holds the raw cohort file.
 
-## 需要放置的文件
+## Required file
 
-| 文件 | 来源 | 说明 |
+| File | Source | Description |
 |---|---|---|
-| `alf_icu_final_first_stay.xlsx` | 自建队列（MIMIC-IV 衍生） | 每患者一行，n=2,508。含 `outcome`、`Liver_transplantation`、`Vasopressin`、`rrt`、`Age` 等列 |
+| `alf_icu_final_first_stay.xlsx` | self-built cohort (derived from MIMIC-IV) | one row per patient, n = 2,508. Contains `outcome`, `Liver_transplantation`, `Vasopressin`, `rrt`, `Age`, etc. |
 
-## 生成方式
+## How it is built
 
-该队列由 MIMIC-IV（v2.x/3.x）按 ALF 入组标准构建：
-1. 首次 ICU 入住（`mimiciv_icu.icustays` 取 `intime` 最早一条）
-2. 满足急性肝衰竭判定（肝性脑病 + INR ≥ 1.5，或胆红素与凝血障碍组合）
-3. 年龄 ≥ 18
+The cohort is constructed from MIMIC-IV (v2.x/3.x) under ALF inclusion criteria:
+1. First ICU stay (earliest `intime` in `mimiciv_icu.icustays`).
+2. Meets acute liver failure criteria (hepatic encephalopathy plus INR >= 1.5, or a combination
+   of bilirubin and coagulopathy).
+3. Age >= 18.
 
-因 MIMIC-IV 受 PhysioNet 数据使用协议（DUA）约束，**本仓库不分发任何患者级数据**。
-完成 PhysioNet 认证后，可按上述标准在 `python/01_extract_longitudinal.py` 的数据抽取链路
-上自行重建队列。
+Because MIMIC-IV is governed by the PhysioNet Data Use Agreement, **this repository distributes no
+patient-level data**. After completing PhysioNet credentialing, you can rebuild the cohort yourself
+using the extraction pipeline in `python/01_extract_longitudinal.py`.
 
-## 覆盖默认路径
+## Overriding the default path
 
-脚本默认读取 `cohort/alf_icu_final_first_stay.xlsx`。如需放到别处：
+Scripts read `cohort/alf_icu_final_first_stay.xlsx` by default. To place it elsewhere:
 
 ```bash
 export ALF_COHORT_XLSX="/path/to/your/alf_icu_final_first_stay.xlsx"

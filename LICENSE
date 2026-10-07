@@ -21,5 +21,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 --------------------------------------------------------------------------
-注意：本许可仅覆盖代码。MIMIC-IV 数据受 PhysioNet 数据使用协议（DUA）约束，
-使用者须自行完成 credential 认证，且不得重新分发任何患者级数据。
+NOTE: This license covers the code only. MIMIC-IV data are governed by the
+PhysioNet Data Use Agreement: users must complete credentialing themselves and
+must not redistribute any patient-level data.

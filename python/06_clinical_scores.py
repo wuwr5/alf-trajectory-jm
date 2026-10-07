@@ -1,15 +1,28 @@
 # -*- coding: utf-8 -*-
-"""临床评分臂对照: MELD / SOFA / ALFSG 在 Day2 风险集上的区分度与校准
-- MELD / SOFA: 使用 jm_base.csv 现成分数, 经本队列 5 折 cross-fitting logistic 概率化
-- ALFSG: 采用 US-ALFSG 变量结构 (肝性脑病分级 / log 胆红素 / log INR / 血管加压素 / 病因,
-         Koch 2016, Clin Gastroenterol Hepatol, C=0.84), 系数在本队列估计 (文献未给可移植系数)
-输出: data/scores_pred.csv, data/scores_summary.csv
+"""Clinical score comparator arms: discrimination and calibration of MELD / SOFA / ALFSG
+on the Day-2 risk set.
+
+- MELD / SOFA: use the ready-made scores in jm_base.csv, converted to probabilities by
+  in-cohort 5-fold cross-fitted logistic regression.
+- ALFSG: adopt the US-ALFSG variable structure (hepatic encephalopathy grade / log bilirubin /
+  log INR / vasopressin / etiology; Koch 2016, Clin Gastroenterol Hepatol, C = 0.84), with
+  coefficients estimated in this cohort (the publication gives no portable coefficients).
+
+Output: data/scores_pred.csv, data/scores_summary.csv
 """
-import sys, numpy as np, pandas as pd
-sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
+import os
+import sys
+
+import numpy as np
+import pandas as pd
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
+except Exception:
+    pass
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold
-# --- 路径解析：支持环境变量覆盖，默认仓库内 data/ ---
+# --- Path resolution: overridable via environment variables, defaults to data/ in the repo ---
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
 DATA = os.environ.get("ALF_DATA_DIR", os.path.join(_ROOT, "data"))
@@ -17,38 +30,42 @@ COHORT_XLSX = os.environ.get("ALF_COHORT_XLSX",
                              os.path.join(_ROOT, "cohort", "alf_icu_final_first_stay.xlsx"))
 os.makedirs(DATA, exist_ok=True)
 
-
 OUT = DATA
 XLSX = COHORT_XLSX
 L = 2
 
 raw = pd.read_excel(XLSX, sheet_name="data")
 raw["case_id"] = range(1, len(raw) + 1); raw["outcome"] = raw["outcome"].astype(int)
-mp  = pd.read_csv(OUT + "/jm_id_to_caseid.csv")
-js  = pd.read_csv(OUT + "/jm_surv.csv").merge(mp, on="id", how="left")
+mp  = pd.read_csv(os.path.join(OUT, "jm_id_to_caseid.csv"))
+js  = pd.read_csv(os.path.join(OUT, "jm_surv.csv")).merge(mp, on="id", how="left")
 truth = raw[["case_id","outcome"]].merge(js[["case_id","event_time_d"]], on="case_id", how="left")
 
-base = pd.read_csv(OUT + "/jm_base.csv")
-# jm_base 自带旧 outcome 列, 统一改用 xlsx outcome 为真值 (避免 merge 列名冲突)
+base = pd.read_csv(os.path.join(OUT, "jm_base.csv"))
+# Both jm_base.csv and jm_id_to_caseid.csv carry their own `outcome` column.
+# Drop them and take `outcome` from the cohort workbook as the single ground truth,
+# otherwise pandas suffixes the colliding columns (outcome_x / outcome_y).
 base = base.drop(columns=["outcome"], errors="ignore")
-b = base.merge(mp, on="id", how="inner").merge(truth, on="case_id", how="inner")
+mp_id = mp[["id", "case_id"]].drop_duplicates("id")
+b = base.merge(mp_id, on="id", how="inner").merge(truth, on="case_id", how="inner")
 
-# Day2 纵向值 (tday<=2 的最新一次), jm_wide 存的是 log 值 -> exp 还原原始尺度
-wide = pd.read_csv(OUT + "/jm_wide.csv")
+# Day-2 longitudinal values (most recent measurement with tday <= 2);
+# jm_wide stores log values -> exponentiate back to the original scale
+wide = pd.read_csv(os.path.join(OUT, "jm_wide.csv"))
 wd = wide[wide["tday"] <= L]
 day2 = wd.sort_values("tday").groupby("id").last().reset_index()[["id","Bilirubin","INR","Creatinine"]]
 b = b.merge(day2, on="id", how="left")
 b["Bili_raw"] = np.exp(b["Bilirubin"]); b["INR_raw"] = np.exp(b["INR"]); b["Cre_raw"] = np.exp(b["Creatinine"])
 
-# Day2 landmark 风险集 (统一定义): 仅排除入科后 L 天内已死亡者。
-# 不得用 event_time_d>L 筛选 —— 部分患者 <2 天转出 ICU、event=0, Day2 仍存活, 属合法风险集成员。
+# Day-2 landmark risk set (unified definition): exclude only those who died within L days.
+# Do NOT filter with event_time_d > L -- some patients left the ICU within 2 days with
+# event = 0 and are still alive at Day 2, so they are legitimate members of the risk set.
 b = b[~((b["outcome"] == 1) & (b["event_time_d"] <= L))].copy()
-print(f"评分臂样本 (Day2 风险集, 统一口径): n={len(b)}")
+print(f"Score-arm sample (Day-2 risk set, unified definition): n={len(b)}")
 
 def clean(X):
     X = np.asarray(X, float)
     if X.ndim == 1: X = X.reshape(-1, 1)
-    # 列内中位数填补, 保证无 NaN
+    # Impute with the column median so that no NaN remains
     for j in range(X.shape[1]):
         col = X[:, j]; med = np.nanmedian(col) if np.isfinite(col).any() else 0.0
         col[~np.isfinite(col)] = med
@@ -79,7 +96,7 @@ def brier(y, s):
     y = np.asarray(y, float); s = np.asarray(s, float); m = np.isfinite(s)
     return float(np.mean((y[m]-s[m])**2))
 
-# ALFSG 变量结构 (US-ALFSG: HE 分级 + log 胆红素 + log INR + 血管加压素 + 病因)
+# ALFSG variable structure (US-ALFSG: HE grade + log bilirubin + log INR + vasopressin + etiology)
 X_alf = pd.DataFrame({
     "HE":      b["HE"].fillna(0),
     "logBili": np.log(b["Bili_raw"].fillna(np.nanmedian(b["Bili_raw"])) + 1),
@@ -104,8 +121,9 @@ for h in (7, 14):
         rows.append({"arm": name, "horizon": h, "AUC": round(a,3), "AUC_lo": round(lo,3),
                      "AUC_hi": round(hi,3), "cal_int": round(ci,3), "cal_slope": round(cs,3),
                      "Brier": round(br,4), "n": int(np.isfinite(pp).sum()), "ev": int(yh[np.isfinite(pp)].sum())})
-        print(f"{name} h={h} AUC={a:.3f}[{lo:.3f},{hi:.3f}] cal(sl={cs:.2f},int={ci:.2f}) Brier={br:.4f} ev={int(yh[np.isfinite(pp)].sum())}")
+        print(f"{name} h={h} AUC={a:.3f}[{lo:.3f},{hi:.3f}] cal(sl={cs:.2f},int={ci:.2f}) "
+              f"Brier={br:.4f} ev={int(yh[np.isfinite(pp)].sum())}")
 
-out.to_csv(OUT + "/scores_pred.csv", index=False, encoding="utf-8-sig")
-pd.DataFrame(rows).to_csv(OUT + "/scores_summary.csv", index=False, encoding="utf-8-sig")
+out.to_csv(os.path.join(OUT, "scores_pred.csv"), index=False, encoding="utf-8")
+pd.DataFrame(rows).to_csv(os.path.join(OUT, "scores_summary.csv"), index=False, encoding="utf-8")
 print("SCORES_DONE")

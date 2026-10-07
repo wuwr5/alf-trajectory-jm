@@ -1,9 +1,10 @@
-# 仅重做 JM 单变量臂(胆红素/INR/肌酐 并集)动态预测, 复用 jm_fits.rds, 统一 Day2 风险集口径
-# 口径: 排除 (event==1 & event_time_d<=L) -> 风险集应为 n=2331
+# Redo only the dynamic prediction for the univariate JM arm (bilirubin / INR / creatinine union),
+# reusing jm_fits.rds, with the unified Day-2 risk set definition.
+# Definition: exclude (event == 1 & event_time_d <= L) -> the risk set should be n = 2331.
 suppressPackageStartupMessages({
   library(JMbayes2); library(splines); library(survival); library(nlme)
 })
-# --- 路径解析：支持环境变量覆盖，默认仓库内 data/ ---
+# --- Path resolution: overridable via environment variables, defaults to data/ in the repo ---
 .this <- tryCatch({
   a <- commandArgs(trailingOnly = FALSE)
   f <- sub("^--file=", "", a[grep("^--file=", a)])
@@ -16,13 +17,21 @@ if (!nzchar(ROOT)) {
 DATA <- Sys.getenv("ALF_DATA_DIR", unset = file.path(ROOT, "data"))
 dir.create(DATA, recursive = TRUE, showWarnings = FALSE)
 
+# --- BOM-tolerant CSV reader -------------------------------------------------
+# pandas writes a UTF-8 BOM when encoding="utf-8-sig" is used. R's read.csv then
+# names the first column "X...id" instead of "id", silently breaking every join.
+# read_csv_safe() strips a leading BOM so both BOM and BOM-free files work.
+read_csv_safe <- function(path, ...) {
+  read.csv(path, fileEncoding = "UTF-8-BOM", ...)
+}
+
+
 set.seed(2024)
-DATA <- Sys.getenv("ALF_DATA_DIR", unset = file.path(ROOT, "data"))
 LOG  <- file.path(DATA, "jm_repred_log.txt")
 log <- function(...) { cat(..., "\n"); cat(..., "\n", file = LOG, append = TRUE) }
 
-wide <- read.csv(file.path(DATA, "jm_wide.csv"))
-surv_id <- read.csv(file.path(DATA, "jm_surv.csv"))
+wide <- read_csv_safe(file.path(DATA, "jm_wide.csv"))
+surv_id <- read_csv_safe(file.path(DATA, "jm_surv.csv"))
 ind <- surv_id[!duplicated(surv_id$id), ]
 ind <- merge(ind, unique(wide[, c("id","MELD","SOFA")]), by = "id", all.x = TRUE)
 ind$Age_c  <- (ind$Age - 60) / 10
@@ -30,14 +39,15 @@ ind$MELD_c <- (ind$MELD - 20) / 5
 wide <- merge(wide, ind[, c("id","Age_c","MELD_c")], by = "id", all.x = TRUE)
 
 fits <- readRDS(file.path(DATA, "jm_fits.rds"))
-log("已加载 jm_fits.rds: ", paste(names(fits), collapse=", "))
-# jm 对象无 ranef 方法; 受试者集取 model_data$idT 的水平(即进入 Cox 部分的个体)
+log("Loaded jm_fits.rds: ", paste(names(fits), collapse=", "))
+# jm objects have no ranef method; take the subject set from the levels of model_data$idT
+# (i.e. the individuals entering the Cox part).
 fit_ids <- lapply(fits, function(f) as.character(levels(f$model_data$idT)))
-log("各 marker 拟合受试者数: ", paste(names(fits), sapply(fit_ids, length), sep="=", collapse=", "))
+log("Subjects fitted per marker: ", paste(names(fits), sapply(fit_ids, length), sep="=", collapse=", "))
 
 L <- 2
 risk <- ind[!((ind$event == 1) & (ind$event_time_d <= L)), ]
-log("\n===== JM 单变量臂动态预测 (landmark Day", L, ") 风险集 n =", nrow(risk), "=====")
+log("\n===== Univariate JM arm dynamic prediction (landmark Day", L, ") risk set n =", nrow(risk), "=====")
 
 pred_by_marker <- list()
 for (m in names(fits)) {
@@ -47,12 +57,12 @@ for (m in names(fits)) {
     nd$event_time_d <- L; nd$event <- 0
     p <- tryCatch(predict(fits[[m]], newdata = nd, process = "event",
                           times = L + h, return_newdata = TRUE),
-                  error = function(e) { log("  !! predict", m, "h", h, "失败:", conditionMessage(e)); NULL })
+                  error = function(e) { log("  !! predict", m, "h", h, "failed:", conditionMessage(e)); NULL })
     if (is.null(p)) next
     hor <- p[p$tday == L + h, ]
     out <- data.frame(id = as.character(hor$id), prob = hor$pred_CIF, lo = hor$low_CIF, hi = hor$upp_CIF)
     pred_by_marker[[paste0(m,"_h",h)]] <- out
-    log(sprintf("  %s h=%d: n=%d 风险范围 %.3f..%.3f 均值 %.3f",
+    log(sprintf("  %s h=%d: n=%d risk range %.3f..%.3f mean %.3f",
                 m, h, nrow(out), min(out$prob), max(out$prob), mean(out$prob)))
   }
 }
@@ -78,7 +88,7 @@ for (h in c(7, 14)) {
   tbl$y <- as.integer(tbl$event == 1 & tbl$event_time_d <= L + h)
   write.csv(tbl, file.path(DATA, sprintf("jm_pred_L%d_h%d.csv", L, h)), row.names = FALSE)
   ev <- sum(tbl$y); n <- nrow(tbl)
-  log(sprintf("输出 jm_pred_L%d_h%d.csv: n=%d 事件=%d (%.1f%%) 并集风险均值 %.3f",
+  log(sprintf("Wrote jm_pred_L%d_h%d.csv: n=%d events=%d (%.1f%%) union risk mean %.3f",
               L, h, n, ev, 100*ev/n, mean(tbl$prob_JM, na.rm=TRUE)))
 }
 log("\nJM REPREDICT DONE")

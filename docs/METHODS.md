@@ -1,93 +1,110 @@
-# 方法学说明
+# Methods
 
-## 1. 队列与时间原点
+## 1. Cohort and time origin
 
-- 纳入符合 ALF 诊断标准的成年患者，取**首次 ICU 入住**，n = 2,508，院内死亡 962（38.4%），肝移植 104（4.1%）。
-- **时间原点 t0 = ICU 入科时刻**（非入院时刻）。从入院起算的死亡时间中位数为 8.0 天，
-  从 ICU 入科起算为 6.34 天，**两者不可混用**。
-- 纵向指标取入科后 0–30 天，主分析建模窗口 0–14 天。
+- Adults meeting ALF diagnostic criteria, taking the **first ICU stay**: n = 2,508,
+  in-hospital deaths 962 (38.4%), liver transplantation 104 (4.1%).
+- **Time origin t0 = ICU admission** (not hospital admission). Median time to death is 8.0 days
+  from hospital admission but 6.34 days from ICU admission -- **these must not be mixed up**.
+- Longitudinal markers are taken from day 0 to day 30 after ICU admission; the primary modelling
+  window is days 0-14.
 
-## 2. 纵向标志物
+## 2. Longitudinal markers
 
-主分析使用 **胆红素、INR、肌酐** 三条轨迹。选择依据：
+The primary analysis uses **bilirubin, INR, and creatinine**. Rationale:
 
-| 指标 | 前 7 天中位测量次数 | 覆盖率 | ≥4 次比例 |
+| Marker | Median measurements, first 7 days | Coverage | Proportion with >=4 |
 |---|---|---|---|
-| 胆红素 | 7 | 98.6% | 82.7% |
+| Bilirubin | 7 | 98.6% | 82.7% |
 | INR | 8 | 98.9% | 89.0% |
-| 肌酐 | 12 | 99.7% | 95.9% |
-| 乳酸 | 7 | 90.2% | — |
+| Creatinine | 12 | 99.7% | 95.9% |
+| Lactate | 7 | 90.2% | -- |
 
-乳酸在人-天宽表中缺失 57.2%，不进主模型。
-**itemid 必须用精确映射**（不可用子串匹配）：50885 胆红素、51237 INR、50912 肌酐、50813 乳酸、
-51265 血小板、50861 ALT、50878 AST、50862 白蛋白、51006 BUN、50983 钠、51222 Hb、51301 WBC、
-51274 PT、51275 PTT（MIMIC-IV 中 APTT 称 PTT）。全部限定 `fluid = 'Blood'`。
-需排除：50954（LDH）、50928（Gastrin）、51148（Blasts）、52190、51240、50811、50814。
+Lactate is missing in 57.2% of person-day rows and is therefore excluded from the main model.
 
-## 3. landmark 框架
+**Itemids must use exact mapping** (never substring matching): 50885 bilirubin, 51237 INR,
+50912 creatinine, 50813 lactate, 51265 platelets, 50861 ALT, 50878 AST, 50862 albumin,
+51006 BUN, 50983 sodium, 51222 Hb, 51301 WBC, 51274 PT, 51275 PTT (MIMIC-IV calls APTT "PTT").
+All restricted to `fluid = 'Blood'`.
+Must be excluded: 50954 (LDH), 50928 (Gastrin), 51148 (Blasts), 52190, 51240, 50811, 50814.
 
-- **主分析 landmark L = 2 天**。Day 0 覆盖率仅 29–35%（入科即刻多未抽血），Day 1 为 89.2%，
-  **Day 2 达 94.5%（核心三指标齐全）**，Day 5 为 98.1%。
-- 风险集定义（**易错**）：
+## 3. Landmark framework
+
+- **Primary landmark L = 2 days**. Day 0 coverage is only 29-35% (blood is rarely drawn right at
+  ICU admission), Day 1 reaches 89.2%, **Day 2 reaches 94.5% (all three core markers available)**,
+  Day 5 reaches 98.1%.
+- Risk set definition (**easy to get wrong**):
 
   ```
-  纳入：~(outcome == 1 & event_time_d <= L)
+  Include: ~(outcome == 1 & event_time_d <= L)
   ```
 
-  即只排除"入科后 ≤ L 天内已死亡"者。
-  **不得**写作 `event_time_d > L`——那会额外误剔"入科 2 天内转出 ICU、event = 0、Day 2 仍存活"的患者。
-  两种写法在本队列相差 15 例（2,331 vs 2,316）。
+  That is, exclude only those who died within L days of ICU admission.
+  Do **not** write `event_time_d > L` -- that additionally drops patients who left the ICU within
+  2 days, have `event = 0`, and are still alive at Day 2.
+  The two definitions differ by 15 subjects in this cohort (2,331 vs 2,316).
 
-- 终点：`y = (outcome == 1) & (event_time_d <= L + h)`，h ∈ {7, 14}。
+- Endpoint: `y = (outcome == 1) & (event_time_d <= L + h)`, h in {7, 14}.
 
-## 4. 联合模型
+## 4. Joint models
 
-Cox 生存子模型：`Surv(event_time_d, event) ~ Age_c + gender_male + MELD_c`
-（Age 以 60 为中心、每 10 岁缩放；MELD 以 20 为中心、每 5 分缩放）。
+Cox survival submodel: `Surv(event_time_d, event) ~ Age_c + gender_male + MELD_c`
+(age centred at 60 and scaled per 10 years; MELD centred at 20 and scaled per 5 points).
 
-纵向子模型（每个标志物）：
+Longitudinal submodel (per marker):
 
 ```
 marker ~ ns(tday, 3) * Age_c + ns(tday, 3) * MELD_c + ns(tday, 3) * gender_male
 random = ~ ns(tday, 3) | id
 ```
 
-- **单变量臂**：三个标志物各拟合一个 JM，Day 2 条件风险取三者均值。
-  隐含假设是三条轨迹的个体演化彼此独立。
-- **三变量臂（JM-mv）**：`jm(CoxFit, list(fmB, fmI, fmC), time_var = "tday")`，
-  三条轨迹共享相关随机效应。MCMC：3 链 × 3000 迭代，burn-in 1500，thin 2，seed 2024。
+- **Univariate arm**: one JM per marker; the Day-2 conditional risk is the mean of the three.
+  This implicitly assumes the three trajectories evolve independently within a subject.
+- **Trivariate arm (JM-mv)**: `jm(CoxFit, list(fmB, fmI, fmC), time_var = "tday")`, where the three
+  trajectories share correlated random effects.
+  MCMC: 3 chains x 3000 iterations, burn-in 1500, thin 2, seed 2024.
 
-## 5. 动态预测
+## 5. Dynamic prediction
 
-条件累积发生率 `P(L < T ≤ L + h | T > L, 轨迹至 L)`，由 `predict.jm` 给出：
+Conditional cumulative incidence `P(L < T <= L + h | T > L, trajectory up to L)`,
+obtained from `predict.jm`:
 
 ```r
 nd <- wide[wide$tday <= L & id %in% risk$id, ]
-nd$event_time_d <- L          # 重置生存原点到 landmark
+nd$event_time_d <- L          # reset the survival origin to the landmark
 nd$event        <- 0
 p  <- predict(jm_fit, newdata = nd, process = "event", times = L + h, return_newdata = TRUE)
 cif <- p[p$tday == L + h, "pred_CIF"]
 ```
 
-## 6. 轨迹表型
+## 6. Trajectory phenotypes
 
-对个体随机效应后验均值 b̂（三变量模型为 12 维）标准化后 k-means 聚类，
-K 由肘部法则确定（本队列 K = 3）。聚类对象为**随机效应**而非原始轨迹，
-因为它已按模型对个体偏离群体均值的方向与速率做了参数化压缩，噪声更低。
+Standardised posterior means of the subject-specific random effects b_hat (12-dimensional for the
+trivariate model) are clustered with k-means; K is chosen by the elbow method (K = 3 in this
+cohort). Clustering operates on the **random effects** rather than the raw trajectories because
+they are a parametrically compressed summary, produced by the model, of the direction and speed of
+each subject's deviation from the population mean, and therefore carry less noise.
 
-## 7. 评价指标
+## 7. Evaluation metrics
 
-- **区分度**：DeLong AUC 及其 95% CI（正态近似，基于 Sun-Xu 方差估计）。
-- **校准**：校准截距与斜率，通过对 `logit(p)` 拟合无惩罚 logistic 回归得到；辅以 Hosmer-Lemeshow。
-  在 n ≈ 2,300 时 HL 检验对微小偏离极度敏感（多数臂 p ≈ 0），故**以斜率/截距为主要判据**。
-- **整体性能**：Brier 分数。
-- **临床效用**：决策曲线分析（DCA），阈值 0.02–0.98，步长 0.02。
-- LLM 与评分臂的概率校准/概率化均使用 **5 折 cross-fitting**，避免乐观偏倚。
+- **Discrimination**: DeLong AUC with 95% CI (normal approximation based on the Sun-Xu variance).
+- **Calibration**: calibration intercept and slope from an unpenalised logistic regression of the
+  outcome on `logit(p)`; Hosmer-Lemeshow as a supplement.
+  At n around 2,300 the HL test is extremely sensitive to trivial deviations (most arms give
+  p about 0), so **slope and intercept are the primary criteria**.
+- **Overall performance**: Brier score.
+- **Clinical utility**: decision curve analysis (DCA), thresholds 0.02-0.98 in steps of 0.02.
+- Probabilistic calibration of the LLM and score arms uses **5-fold cross-fitting** to avoid
+  optimistic bias.
 
-## 8. 已知局限
+## 8. Known limitations
 
-1. 单中心（MIMIC-IV），无外部验证。
-2. 肝移植 104 例按删失处理，未显式建模为竞争风险。
-3. 早期死亡者（36.6% 在 4 天内死亡）的可用纵向窗口很短，动态预测对其价值有限，应分层解读。
-4. 评分臂的良好校准是"本队列 cross-fitting 概率化"的产物，非原始分数的天然属性。
-5. 联合模型未能输出预测的 5 例（纵向观测不足，均为存活病例）被排除，对死亡率估计无实质影响。
+1. Single centre (MIMIC-IV), no external validation.
+2. The 104 liver transplantations are treated as censored; they are not modelled explicitly as a
+   competing risk.
+3. Early deaths (36.6% die within 4 days) have a very short usable longitudinal window, so dynamic
+   prediction adds little for them; results should be interpreted in strata.
+4. The good calibration of the score arms is a product of in-cohort cross-fitted probabilisation,
+   not an inherent property of the raw scores.
+5. The 5 subjects for which the joint model produced no prediction (insufficient longitudinal
+   observations, all survivors) were excluded; this has no material effect on mortality estimates.

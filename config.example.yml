@@ -1,25 +1,26 @@
-# 复制为 config.local.yml 后填写（config.local.yml 已在 .gitignore 中，不会被提交）
-# 也可以直接用环境变量，见 README「配置」一节。
+# Copy to config.local.yml and fill in (config.local.yml is git-ignored and never committed).
+# You can also use environment variables; see the "Configuration" section of README.md.
 
 database:
-  # MIMIC-IV 所在的 PostgreSQL。密码**只**通过环境变量 PGPASSWORD 传入，禁止写入本文件。
+  # PostgreSQL instance hosting MIMIC-IV. The password is passed **only** via the PGPASSWORD
+  # environment variable; never write it into this file.
   host: localhost
   port: 2023
   user: postgres
   dbname: postgres
-  # password: 不要填 —— 使用: export PGPASSWORD=xxxx
+  # password: leave unset -- use: export PGPASSWORD=xxxx
 
 paths:
-  # 队列 xlsx（每患者一行，含 outcome）。不随仓库分发。
+  # Cohort xlsx (one row per patient, includes outcome). Not distributed with the repository.
   cohort_xlsx: ./cohort/alf_icu_final_first_stay.xlsx
-  # 所有中间产物与结果的输出目录
+  # Output directory for all intermediate and final results
   data_dir: ./data
 
 analysis:
-  landmark_day: 2        # 主分析 landmark L（天，自 ICU 入科起算）
-  horizons: [7, 14]      # 预测视界 h：预测 Day L 之后 h 天内的死亡
-  markers: [Bilirubin, INR, Creatinine]   # 进入联合模型的纵向标志物
-  n_clusters: 3          # 轨迹表型数（由肘部法则确定）
+  landmark_day: 2        # primary landmark L (days since ICU admission)
+  horizons: [7, 14]      # prediction horizons h: death within h days after day L
+  markers: [Bilirubin, INR, Creatinine]   # longitudinal markers entering the joint model
+  n_clusters: 3          # number of trajectory phenotypes (chosen by the elbow method)
 
 jm:
   n_chains: 3

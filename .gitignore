@@ -1,26 +1,26 @@
-# ---------------------------------------------------------------- 数据（绝不入库）
+# ------------------------------------------------- data (never committed)
 data/
 cohort/*.xlsx
 *.rds
 *.csv
 *.tsv
 
-# MIMIC-IV 受数据使用协议约束，禁止上传任何患者级数据。
-# data/ 目录仅在本机生成，由本仓库脚本产出。
+# MIMIC-IV is governed by a Data Use Agreement: never upload patient-level data.
+# The data/ directory is generated locally by the scripts in this repository.
 
-# ---------------------------------------------------------------- 密钥与本机配置
+# ------------------------------------------------- secrets and local config
 .env
 *.env
 config.local.yml
 .DS_Store
 
-# ---------------------------------------------------------------- 输出
+# ------------------------------------------------- generated outputs
 fig_*.png
 jm_*_log.txt
 logs_*.txt
 *_stdout.txt
 
-# ---------------------------------------------------------------- 语言产物
+# ------------------------------------------------- language artefacts
 __pycache__/
 *.py[cod]
 .Rhistory
@@ -28,7 +28,7 @@ __pycache__/
 .Rproj.user
 *.Rproj
 
-# ---------------------------------------------------------------- 编辑器 / OS
+# ------------------------------------------------- editor / OS
 .vscode/
 .idea/
 Thumbs.db

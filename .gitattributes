@@ -1,7 +1,7 @@
-# 统一行尾：仓库内一律 LF，检出时按平台转换
+# Normalise line endings: LF inside the repository, converted on checkout.
 * text=auto eol=lf
 
-# 明确文本类型
+# Explicit text types
 *.R    text eol=lf
 *.py   text eol=lf
 *.md   text eol=lf
@@ -9,7 +9,7 @@
 *.txt  text eol=lf
 LICENSE text eol=lf
 
-# 二进制（如有）
+# Binary types
 *.png binary
 *.rds binary
 *.xlsx binary
