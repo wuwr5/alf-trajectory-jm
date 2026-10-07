@@ -9,5 +9,9 @@ matplotlib>=3.7
 openpyxl>=3.1           # read the cohort workbook (.xlsx)
 psycopg2-binary>=2.9    # extract MIMIC-IV from PostgreSQL (script 01 only)
 
+# Comparator arms
+requests>=2.31          # script 13: DeepSeek API calls
+torch>=2.2              # script 11: FT-Transformer (arm 2)
+
 # Optional: build the manuscript .docx
 python-docx>=1.1

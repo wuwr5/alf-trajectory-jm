@@ -16,12 +16,15 @@ large language models, and clinical scores.
 ## 1. Method overview
 
 ```
+Branch A -- joint models and trajectories (self-contained)
+---------------------------------------------------------
 MIMIC-IV (PostgreSQL)
       |  01_extract_longitudinal.py     exact itemid extraction, t0 = ICU admission
       v
 Long format: 907,046 rows / 2,501 subjects / 19 markers
       |  02_build_model_data.py         survival table + baseline covariates
       |  03_make_wide.py                person-day wide table (tday 0-14), main R input
+      |  04_link_identifiers.py         case_id <-> id composite exact matching
       v
 jm_long.csv / jm_surv.csv / jm_base.csv / jm_wide.csv
       |
@@ -33,10 +36,32 @@ jm_long.csv / jm_surv.csv / jm_base.csv / jm_wide.csv
       |  R/05_trajectory_clustering.R   random effects b_hat -> k-means phenotypes
       v
 jm_pred_L2_h{7,14}.csv / jm_mv_pred_L2_h{7,14}.csv / jm_mv_clusters.csv
+
+Branch B -- comparator arms (classical models, LLMs, clinical scores)
+--------------------------------------------------------------------
+cohort xlsx
+      |  08_prepare_cohort.py           clean, winsorise, MICE, emit meta.json
+      v
+clinical_full.csv / llm_input_full.csv / meta.json
       |
-      |  python/05_calibrate_llm.py     LLM probability recalibration (Platt / isotonic, 5-fold)
-      |  python/06_clinical_scores.py   MELD / SOFA / ALFSG score arms
-      |  python/07_compare_all_arms.py  eleven-arm AUC-calibration-Brier-DCA summary
+      |-- 09_baseline_lr.py             forward-Wald logistic regression
+      |
+      |-- 10_prep_transformer_data.py   project onto the FT-Transformer feature list
+      |   11_train_transformer.py       5-fold x 3 seeds out-of-fold predictions
+      |
+      |-- 12_make_llm_cards.py          Hy4 compact cards + DeepSeek NL cards
+      |   13_predict_deepseek.py        DeepSeek API, 3 independent runs
+      |   14_merge_llm_runs.py          fold runs into the wide comparison files
+      |
+      +-- 06_clinical_scores.py         MELD / SOFA / ALFSG
+      v
+clinical_pred_full.csv / transformer_oof.csv /
+hy4_pred_full.csv / ds_pred_run{1,2,3}.csv / scores_pred.csv
+
+Both branches meet here
+-----------------------
+      |  05_calibrate_llm.py            LLM probability recalibration (Platt / isotonic, 5-fold)
+      |  07_compare_all_arms.py         eleven-arm AUC-calibration-Brier-DCA summary
       v
 all_arms_summary.csv + 4 figures
 ```
@@ -88,10 +113,12 @@ All paths can be overridden by environment variables; defaults point inside the 
 | `ALF_DATA_DIR` | data / output directory | `$ALF_ROOT/data` |
 | `ALF_COHORT_XLSX` | cohort file | `$ALF_ROOT/cohort/alf_icu_final_first_stay.xlsx` |
 | `PGPASSWORD` | **database password (the only supported channel)** | unset |
+| `ALF_TRANSFORMER_REPO` | checkout of `alf-transformer-mimic` (arm 2) | `$ALF_ROOT/repo_alf_transformer` |
+| `DS_KEY` | DeepSeek API key (arm 4 only) | unset |
 
 Database host/port/user can be set at the top of `python/01_extract_longitudinal.py`,
 or see `config.example.yml`.
-**Never write the password to any file** -- pass it only via `PGPASSWORD`.
+**Never write the password or API key to any file** -- pass them only via environment variables.
 
 You must supply `cohort/alf_icu_final_first_stay.xlsx`: one row per patient, containing
 `outcome` (in-hospital death), `gender`, age, etiology, complications, organ support,
@@ -120,16 +147,30 @@ Rscript R/04_mv_repredict.R                # -> jm_mv_pred_L2_h{7,14}.csv
 Rscript R/03_landmark_prediction.R         # -> jm_pred_L2_h{7,14}.csv
 Rscript R/05_trajectory_clustering.R       # -> jm_mv_clusters.csv + elbow / trajectory plots
 
-# (4) Comparator arms and summary
+# (4) Comparator arms (branches A and B are independent; run B in any order)
+python python/08_prepare_cohort.py         # shared inputs for every comparator arm
+python python/09_baseline_lr.py            # arm 1: logistic regression
+python python/10_prep_transformer_data.py  # arm 2a: FT-Transformer feature table
+python python/11_train_transformer.py      # arm 2b: 5-fold x 3 seeds (needs the repo below)
+python python/12_make_llm_cards.py         # arms 3-4: case cards for both LLMs
+python python/13_predict_deepseek.py       # arm 4: DeepSeek API, 3 runs (paid)
+python python/14_merge_llm_runs.py         # fold per-run LLM outputs
+python python/06_clinical_scores.py        # arms 9-11: MELD / SOFA / ALFSG
+
+# (5) Summary
 python python/05_calibrate_llm.py          # LLM Platt / isotonic recalibration
-python python/06_clinical_scores.py        # MELD / SOFA / ALFSG
 python python/07_compare_all_arms.py       # eleven-arm AUC-calibration-Brier-DCA
 ```
 
-Scripts 05-07 depend on prediction files produced by the comparator arms
-(`clinical_pred_full.csv`, `transformer_oof.csv`, `hy4_pred_full.csv`, `ds_pred_run{1,2,3}.csv`).
-If you only need to reproduce the **joint model and trajectory parts**, skip 05-07;
-01-04 together with everything under `R/` are self-contained.
+Arm 2 requires the model implementation, which lives in a separate repository:
+
+```bash
+git clone https://github.com/wuwr5/alf-transformer-mimic.git repo_alf_transformer
+export KMP_DUPLICATE_LIB_OK=TRUE    # required on Anaconda: torch vs MKL OpenMP clash
+```
+
+Branch A is self-contained. If you only need the **joint model and trajectory parts**,
+run 01-04 plus everything under `R/`, then stop.
 
 ---
 
@@ -194,7 +235,15 @@ alf-trajectory-jm/
 │   ├── 04_link_identifiers.py      case_id <-> id composite exact matching
 │   ├── 05_calibrate_llm.py         LLM probability recalibration
 │   ├── 06_clinical_scores.py       MELD / SOFA / ALFSG
-│   └── 07_compare_all_arms.py      eleven-arm summary + 4 figures
+│   ├── 07_compare_all_arms.py      eleven-arm summary + 4 figures
+│   ├── 08_prepare_cohort.py        clean / winsorise / MICE, shared comparator inputs
+│   ├── 09_baseline_lr.py           arm 1: forward-Wald logistic regression
+│   ├── 10_prep_transformer_data.py arm 2a: FT-Transformer feature table
+│   ├── 11_train_transformer.py     arm 2b: 5-fold x 3 seeds out-of-fold predictions
+│   ├── 12_make_llm_cards.py        arms 3-4: Hy4 compact cards + DeepSeek NL cards
+│   ├── 13_predict_deepseek.py      arm 4: DeepSeek API, 3 independent runs
+│   ├── 14_merge_llm_runs.py        fold per-run LLM outputs
+│   └── prompts.py                  verbatim LLM stimuli (see note in section 7)
 ├── cohort/                  place the cohort xlsx here (git-ignored)
 └── data/                    all outputs (git-ignored, script-generated)
 ```
@@ -227,9 +276,41 @@ These are the traps hit during this project, documented so they are not repeated
   catches Gastrin/Blasts, and Lactate also catches LDH.
   The verified mapping is in `python/01_extract_longitudinal.py`.
 
+- **CSV byte-order marks break R silently.** Python wrote CSVs with `encoding="utf-8-sig"`, so
+  R's `read.csv` named the first column `X...id` instead of `id` and every downstream join
+  failed. Outputs are now plain UTF-8 and R reads through `read_csv_safe()`, which uses
+  `fileEncoding = "UTF-8-BOM"` and accepts both BOM and BOM-free files.
+  (`sub("^\uFEFF", ...)` is *not* a fix -- it raises "input string is invalid" outside a
+  UTF-8 locale.)
+
 ---
 
-## 8. Citation
+## 8. Known gaps
+
+Three things in this study cannot be regenerated byte-identically from the repository alone.
+They are stated explicitly rather than papered over.
+
+1. **The Hy4 arm was run interactively.** Those predictions were produced through a chat
+   interface, fed the compact cards in `hy4_cards_full.txt`, in three batches
+   (`hy4_batch1/2/3.csv`). No system prompt was ever persisted to a file, and consequently no
+   `SYS_HY4` constant is provided here -- inventing one would fabricate provenance. The DeepSeek
+   arm *is* script-driven, so `SYS_DS` in `python/prompts.py` is byte-verified.
+   `14_merge_llm_runs.py` still validates and folds whatever Hy4 batches you supply.
+
+2. **Re-running the LLM arms will not reproduce the published probabilities exactly.** Even with
+   `temperature = 0`, commercial endpoints are not bit-reproducible across time and backend
+   versions. The released prediction files are the authoritative record of what was scored;
+   a re-run should be reported as a fresh replicate, not as a verification of the original.
+
+3. **The strings in `python/prompts.py` are deliberately left in Chinese** while every other
+   string in this repository is English. They are the exact text sent to the models when the
+   reported predictions were collected. Translating them -- even faithfully -- would change model
+   behaviour and break the link between the released outputs and the code. If you want an
+   English-prompt variant, run it as a separately named experiment.
+
+---
+
+## 9. Citation
 
 If this code is useful to your research, please cite MIMIC-IV and JMbayes2:
 
